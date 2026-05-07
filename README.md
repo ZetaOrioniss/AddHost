@@ -1,6 +1,6 @@
 # HostAdd
 
-A simple Python script to add IP-to-domain mappings into a hosts-style file (e.g. `/etc/hosts`).
+I was tired of manually adding hosts during CTFs, so I built this simple Python script to automate the process. It adds IP-to-domain mappings into a hosts-style file (e.g. /etc/hosts) quickly and easily.
 
 ## ⚙️ Features
 
