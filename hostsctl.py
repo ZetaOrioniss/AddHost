@@ -88,7 +88,15 @@ class HostEntry:
 # ─────────────────────────────────────────────
 
 def _check_root() -> bool:
-    return os.access(HOSTS_FILE, os.W_OK)
+    
+    if os.getuid() != 0:
+
+        print('\nRun as sudo !\n')
+        exit(0);
+
+    else:
+
+        return True 
 
 
 def backup_hosts() -> Path:
