@@ -3,6 +3,16 @@
 hostsctl — /etc/hosts manager
 Style: same console aesthetic as revshell (ANSI, readline, shlex).
 Requires root (or write access to /etc/hosts).
+
+CLI USAGE (non-interactive):
+  hostsctl list [managed|system]
+  hostsctl add <ip> <hostname> [aliases…] [-c "comment"]
+  hostsctl remove <hostname>
+  hostsctl edit <hostname> [--ip <ip>] [--name <n>] [-c "comment"]
+  hostsctl search <term>
+  hostsctl show <hostname>
+  hostsctl backup [list]
+  hostsctl restore <n>
 """
 
 import os
@@ -12,6 +22,7 @@ import shlex
 import readline
 import shutil
 import datetime
+import argparse
 from pathlib import Path
 from dataclasses import dataclass, field
 
@@ -55,9 +66,9 @@ class C:
 
 HOSTS_FILE  = Path("/etc/hosts")
 BACKUP_DIR  = Path(os.path.expanduser("~/.hostsctl/backups"))
-MAX_BACKUPS = 20          # rotate old backups
+MAX_BACKUPS = 20
 
-SECTION_TAG = "# [hostsctl]"   # marker for entries we manage
+SECTION_TAG = "# [hostsctl]"
 
 
 # ─────────────────────────────────────────────
@@ -70,7 +81,7 @@ class HostEntry:
     hostname: str
     aliases:  list[str] = field(default_factory=list)
     comment:  str       = ""
-    managed:  bool      = True    # written by hostsctl vs pre-existing
+    managed:  bool      = True
 
     def names(self) -> list[str]:
         return [self.hostname] + self.aliases
@@ -88,39 +99,25 @@ class HostEntry:
 # ─────────────────────────────────────────────
 
 def _check_root() -> bool:
-    
     if os.getuid() != 0:
-
         print('\nRun as sudo !\n')
-        exit(0);
-
+        exit(0)
     else:
-
-        return True 
+        return True
 
 
 def backup_hosts() -> Path:
-    """Create a timestamped backup of /etc/hosts in BACKUP_DIR."""
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     ts   = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     dest = BACKUP_DIR / f"hosts_{ts}"
     shutil.copy2(HOSTS_FILE, dest)
-
-    # Rotate: keep only MAX_BACKUPS most recent
     backups = sorted(BACKUP_DIR.glob("hosts_*"))
     for old in backups[:-MAX_BACKUPS]:
         old.unlink(missing_ok=True)
-
     return dest
 
 
 def parse_hosts() -> tuple[list[str], list[HostEntry]]:
-    """
-    Parse /etc/hosts.
-    Returns (raw_lines, managed_entries).
-    raw_lines: every line as-is (for non-destructive rewriting).
-    managed_entries: only lines tagged with SECTION_TAG.
-    """
     raw: list[str]           = []
     managed: list[HostEntry] = []
 
@@ -132,9 +129,7 @@ def parse_hosts() -> tuple[list[str], list[HostEntry]]:
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        # Check if managed
         is_managed = SECTION_TAG in line
-        # Strip inline comments to parse tokens
         code = re.sub(r"#.*$", "", line).strip()
         tokens = code.split()
         if len(tokens) < 2:
@@ -146,7 +141,6 @@ def parse_hosts() -> tuple[list[str], list[HostEntry]]:
         comment  = ""
         if comment_m:
             c = comment_m.group(1)
-            # Strip the section tag from comment text
             c = c.replace(SECTION_TAG.lstrip("# "), "").replace("[hostsctl]", "").strip()
             if c:
                 comment = c
@@ -165,28 +159,21 @@ def write_hosts(new_content: str) -> None:
 
 
 def add_entry(entry: HostEntry) -> str | None:
-    """
-    Append a managed entry to /etc/hosts.
-    Returns error string or None on success.
-    """
     if not _check_root():
         return "Permission denied — run as root or with sudo."
 
     raw, existing = parse_hosts()
 
-    # Duplicate check
     for e in existing:
         if entry.hostname in e.names():
             return f"Hostname '{entry.hostname}' already exists (IP: {e.ip})."
 
     backup_hosts()
 
-    # Build the new line
     line = entry.render()
     if SECTION_TAG not in line:
         line += f"  {SECTION_TAG}"
 
-    # Add a section header if this is the first managed entry
     has_section = any(SECTION_TAG in l for l in raw)
     if not has_section:
         raw.append("")
@@ -198,7 +185,6 @@ def add_entry(entry: HostEntry) -> str | None:
 
 
 def remove_entry(hostname: str) -> str | None:
-    """Remove all lines whose canonical hostname or alias matches."""
     if not _check_root():
         return "Permission denied — run as root or with sudo."
 
@@ -215,7 +201,7 @@ def remove_entry(hostname: str) -> str | None:
         tokens = code.split()
         if len(tokens) >= 2 and hostname in tokens[1:]:
             removed += 1
-            continue    # drop this line
+            continue
         new_lines.append(line)
 
     if removed == 0:
@@ -229,7 +215,6 @@ def remove_entry(hostname: str) -> str | None:
 def edit_entry(hostname: str, new_ip: str | None = None,
                new_hostname: str | None = None,
                new_comment: str | None = None) -> str | None:
-    """In-place edit of an entry line."""
     if not _check_root():
         return "Permission denied — run as root or with sudo."
 
@@ -251,7 +236,6 @@ def edit_entry(hostname: str, new_ip: str | None = None,
             aliases  = tokens[2:]
             old_comment_m = re.search(r"#\s*(.+)$", line)
             old_comment   = old_comment_m.group(1).strip() if old_comment_m else ""
-            # Strip section tag from old comment
             old_comment = old_comment.replace("[hostsctl]", "").replace("hostsctl", "").strip()
 
             e = HostEntry(
@@ -287,7 +271,7 @@ def restore_backup(path: Path) -> str | None:
         return "Permission denied — run as root or with sudo."
     if not path.exists():
         return f"Backup not found: {path}"
-    backup_hosts()   # backup current before restoring
+    backup_hosts()
     shutil.copy2(path, HOSTS_FILE)
     return None
 
@@ -296,7 +280,7 @@ def restore_backup(path: Path) -> str | None:
 #  Display helpers
 # ─────────────────────────────────────────────
 
-W = 80   # table width
+W = 80
 
 def hr(char="─", color=C.YELLOW) -> str:
     return f"{C.BOLD}{color}{char * W}{C.END}"
@@ -305,13 +289,11 @@ def hr(char="─", color=C.YELLOW) -> str:
 def print_entries_table(entries: list[HostEntry], title: str = "HOSTS") -> None:
     managed_count = sum(1 for e in entries if e.managed)
     other_count   = len(entries) - managed_count
-
-    print(f"\n{hr('═')}")
+    print("\n")
     t = f" {title} — {len(entries)} entries ({managed_count} managed, {other_count} system) "
-    print(f"{C.BOLD}{C.YELLOW}{t.center(W)}{C.END}")
-    print(hr("═"))
+    print(f"{C.WHITE}{t.center(W)}{C.END}")
+    print("\n")
 
-    # column widths
     ip_w  = max((len(e.ip)       for e in entries), default=15) + 2
     hn_w  = max((len(e.hostname) for e in entries), default=20) + 2
     ip_w  = max(ip_w,  8)
@@ -340,7 +322,7 @@ def print_entries_table(entries: list[HostEntry], title: str = "HOSTS") -> None:
               f"{al_col:<{22 + len(C.DIM) + len(C.END)}}"
               f"{cm_col}{tag_col}")
 
-    print(hr("═"))
+    print(hr("─", C.DIM))
     print()
 
 
@@ -358,7 +340,6 @@ def print_single_entry(e: HostEntry) -> None:
 
 
 def interactive_remove_picker(entries: list[HostEntry]) -> str | None:
-    """Display numbered list, return chosen hostname or None."""
     managed = [e for e in entries if e.managed]
     if not managed:
         print(C.r("  [-] No managed entries to remove."))
@@ -390,12 +371,10 @@ def interactive_remove_picker(entries: list[HostEntry]) -> str | None:
         print(C.r(f"  [-] Invalid number: {choice}"))
         return None
 
-    # treat as hostname
     return choice
 
 
 def interactive_add_wizard() -> HostEntry | None:
-    """Step-by-step wizard to build a new HostEntry."""
     print(f"\n{hr('─')}")
     print(f"  {C.bold('Add new host')}  {C.dim('(empty field = cancel)')}")
     print(hr("─", C.DIM))
@@ -447,7 +426,6 @@ def interactive_add_wizard() -> HostEntry | None:
 
 
 def interactive_edit_wizard(hostname: str) -> dict | None:
-    """Return dict of fields to update, or None on cancel."""
     entries = all_entries()
     target  = next((e for e in entries if hostname in e.names()), None)
     if not target:
@@ -498,24 +476,21 @@ def print_backups_table(backups: list[Path]) -> None:
 # ─────────────────────────────────────────────
 
 BANNER = f"""
-{C.BOLD}{C.RED}
-  ██╗  ██╗ ██████╗ ███████╗████████╗███████╗ ██████╗████████╗██╗
-  ██║  ██║██╔═══██╗██╔════╝╚══██╔══╝██╔════╝██╔════╝╚══██╔══╝██║
-  ███████║██║   ██║███████╗   ██║   ███████╗██║        ██║   ██║
-  ██╔══██║██║   ██║╚════██║   ██║   ╚════██║██║        ██║   ██║
-  ██║  ██║╚██████╔╝███████║   ██║   ███████║╚██████╗   ██║   ███████╗
-  ╚═╝  ╚═╝ ╚═════╝ ╚══════╝   ╚═╝   ╚══════╝ ╚═════╝   ╚═╝   ╚══════╝
+{C.WHITE}
+╔══════════════════════════════════════════════════════════════╗
+║                          HOSTsCTL                            ║
+╚══════════════════════════════════════════════════════════════╝
 {C.END}{C.DIM}
   /etc/hosts manager console{C.END}
 {C.END}{C.DIM}  Author: {C.BOLD}{C.RED}@ZetaOrioniss{C.END}
-{C.END}{C.DIM}  Version: {C.BOLD}{C.RED}v1.0{C.END}
+{C.END}{C.DIM}  Version: {C.BOLD}{C.RED}v1.1{C.END}
 {C.DIM}
   Backups stored in: {C.END}{C.BOLD}{str(BACKUP_DIR)}{C.END}
 {C.DIM}  Type {C.END}{C.BOLD}help{C.END}{C.DIM} to list available commands.{C.END}
 """
 
 HELP = f"""
-{C.BOLD}{C.YELLOW}
+{C.BOLD}{C.WHITE}
 ╔══════════════════════════════════════════════════════════════╗
 ║                          COMMANDS                            ║
 ╚══════════════════════════════════════════════════════════════╝{C.END}
@@ -552,6 +527,42 @@ HELP = f"""
   {C.g('clear')}                       Clear the screen
   {C.g('help')}                        Show this help
   {C.g('exit')}  /  {C.g('quit')}               Exit
+"""
+
+CLI_HELP_EPILOG = f"""
+{C.BOLD}Examples:{C.END}
+  # List all entries
+  sudo hostsctl list
+  sudo hostsctl list managed
+  sudo hostsctl list system
+
+  # Add entries
+  sudo hostsctl add 10.10.10.5 machine.htb
+  sudo hostsctl add 10.10.10.5 machine.htb admin.machine.htb -c "HackTheBox box"
+  sudo hostsctl add 192.168.1.100 dev.local api.dev.local web.dev.local -c "dev env"
+
+  # Remove
+  sudo hostsctl remove machine.htb
+  sudo hostsctl remove machine.htb --force        # no confirmation prompt
+
+  # Edit
+  sudo hostsctl edit machine.htb --ip 10.10.10.99
+  sudo hostsctl edit machine.htb --name newbox.htb
+  sudo hostsctl edit machine.htb -c "retired box"
+  sudo hostsctl edit machine.htb --ip 10.0.0.1 --name other.htb -c "updated"
+
+  # Search & show
+  sudo hostsctl search 10.10.10
+  sudo hostsctl show machine.htb
+
+  # Backups
+  sudo hostsctl backup
+  sudo hostsctl backup list
+  sudo hostsctl restore 1               # restore latest backup by index
+  sudo hostsctl restore --list          # print backup list and exit
+
+  # Launch interactive console (no subcommand)
+  sudo hostsctl
 """
 
 
@@ -613,7 +624,267 @@ def prompt() -> str:
 
 
 # ─────────────────────────────────────────────
-#  Main loop
+#  CLI argument parser
+# ─────────────────────────────────────────────
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="hostsctl",
+        description=f"{C.BOLD}{C.WHITE}hostsctl{C.END} — /etc/hosts manager",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=CLI_HELP_EPILOG,
+        add_help=True,
+    )
+
+    sub = parser.add_subparsers(dest="command", metavar="<command>")
+
+    # ── list ──────────────────────────────────────────────────────────────
+    p_list = sub.add_parser("list", aliases=["ls"],
+        help="List entries  [managed|system|all]")
+    p_list.add_argument("filter", nargs="?", choices=["managed", "system", "all"],
+        default="all", metavar="managed|system|all",
+        help="Filter subset (default: all)")
+
+    # ── search ────────────────────────────────────────────────────────────
+    p_search = sub.add_parser("search", help="Search entries by IP, hostname, or alias")
+    p_search.add_argument("term", help="Search term")
+
+    # ── show ──────────────────────────────────────────────────────────────
+    p_show = sub.add_parser("show", help="Show details for one entry")
+    p_show.add_argument("hostname", help="Hostname or alias to display")
+
+    # ── add ───────────────────────────────────────────────────────────────
+    p_add = sub.add_parser("add", help="Add a new host entry")
+    p_add.add_argument("ip",       help="IPv4 address  e.g. 10.10.10.5")
+    p_add.add_argument("hostname", help="Canonical hostname  e.g. machine.htb")
+    p_add.add_argument("aliases",  nargs="*", metavar="alias",
+        help="Optional extra names/aliases")
+    p_add.add_argument("-c", "--comment", default="",
+        metavar="TEXT", help="Inline comment")
+
+    # ── remove ────────────────────────────────────────────────────────────
+    p_rm = sub.add_parser("remove", aliases=["rm", "del"],
+        help="Remove an entry by hostname/alias")
+    p_rm.add_argument("hostname", help="Hostname or alias to remove")
+    p_rm.add_argument("-f", "--force", action="store_true",
+        help="Skip confirmation prompt")
+
+    # ── edit ──────────────────────────────────────────────────────────────
+    p_edit = sub.add_parser("edit", help="Edit an existing entry in-place")
+    p_edit.add_argument("hostname", help="Hostname or alias to edit")
+    p_edit.add_argument("--ip",   dest="new_ip",   default=None, metavar="ADDR",
+        help="New IP address")
+    p_edit.add_argument("--name", dest="new_name", default=None, metavar="NAME",
+        help="New canonical hostname")
+    p_edit.add_argument("-c", "--comment", dest="new_comment", default=None,
+        metavar="TEXT", help="New comment (use '' to clear)")
+
+    # ── backup ────────────────────────────────────────────────────────────
+    p_bk = sub.add_parser("backup", help="Create a backup or list existing ones")
+    p_bk.add_argument("action", nargs="?", choices=["list"],
+        metavar="list", help="'list' to show saved backups")
+
+    # ── backups (alias) ───────────────────────────────────────────────────
+    sub.add_parser("backups", help="List all saved backups (alias for 'backup list')")
+
+    # ── restore ───────────────────────────────────────────────────────────
+    p_rst = sub.add_parser("restore", help="Restore a backup")
+    p_rst.add_argument("index", nargs="?", type=int, default=None,
+        metavar="N", help="Backup number (from 'backup list'); omit for interactive")
+    p_rst.add_argument("-l", "--list", dest="show_list", action="store_true",
+        help="Print backup list and exit")
+    p_rst.add_argument("-f", "--force", action="store_true",
+        help="Skip confirmation prompt")
+
+    return parser
+
+
+# ─────────────────────────────────────────────
+#  CLI dispatch  (non-interactive)
+# ─────────────────────────────────────────────
+
+def run_cli(args: argparse.Namespace) -> int:
+    """Execute a single CLI command. Returns exit code."""
+
+    cmd = args.command
+
+    # normalise aliases
+    if cmd in ("ls",):        cmd = "list"
+    if cmd in ("rm", "del"):  cmd = "remove"
+    if cmd == "backups":      cmd = "backup"; args.action = "list"
+
+    # ── list ──────────────────────────────────────────────────────────────
+    if cmd == "list":
+        entries = all_entries()
+        f = getattr(args, "filter", "all")
+        if f == "managed":
+            entries = [e for e in entries if e.managed]
+            print_entries_table(entries, "MANAGED ENTRIES")
+        elif f == "system":
+            entries = [e for e in entries if not e.managed]
+            print_entries_table(entries, "SYSTEM ENTRIES")
+        else:
+            print_entries_table(entries, "ALL ENTRIES")
+
+    # ── search ────────────────────────────────────────────────────────────
+    elif cmd == "search":
+        term    = args.term.lower()
+        entries = all_entries()
+        found   = [e for e in entries
+                   if term in e.ip.lower()
+                   or any(term in n.lower() for n in e.names())]
+        if found:
+            print_entries_table(found, f"SEARCH '{args.term}'")
+        else:
+            print(C.dim(f"  No entries matching '{args.term}'."))
+
+    # ── show ──────────────────────────────────────────────────────────────
+    elif cmd == "show":
+        entries = all_entries()
+        target  = next((e for e in entries if args.hostname in e.names()), None)
+        if target:
+            print_single_entry(target)
+        else:
+            print(C.r(f"  [-] No entry found for '{args.hostname}'."))
+            return 1
+
+    # ── add ───────────────────────────────────────────────────────────────
+    elif cmd == "add":
+        ip = args.ip
+        if not re.match(r"^\d{1,3}(\.\d{1,3}){3}$", ip):
+            print(C.r(f"  [-] Invalid IP address: '{ip}'"))
+            return 1
+        entry = HostEntry(ip=ip, hostname=args.hostname,
+                          aliases=args.aliases, comment=args.comment, managed=True)
+        err = add_entry(entry)
+        if err:
+            print(C.r(f"  [-] {err}"))
+            return 1
+        print(f"  {C.g('✔')}  Added: {C.g(args.hostname)} → {ip}")
+
+    # ── remove ────────────────────────────────────────────────────────────
+    elif cmd == "remove":
+        if not getattr(args, "force", False):
+            try:
+                confirm = input(
+                    f"  {C.y('[!] Remove')} {C.bold(args.hostname)}{C.y('?')} "
+                    f"{C.dim('[y/N]')} "
+                ).strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                print()
+                return 0
+            if confirm not in ("y", "yes"):
+                print(C.dim("  Cancelled."))
+                return 0
+        err = remove_entry(args.hostname)
+        if err:
+            print(C.r(f"  [-] {err}"))
+            return 1
+        print(f"  {C.g('✔')}  Removed: {C.g(args.hostname)}")
+
+    # ── edit ──────────────────────────────────────────────────────────────
+    elif cmd == "edit":
+        if args.new_ip is None and args.new_name is None and args.new_comment is None:
+            # no flags → wizard
+            changes = interactive_edit_wizard(args.hostname)
+            if changes:
+                err = edit_entry(args.hostname, **changes)
+                if err:
+                    print(C.r(f"  [-] {err}"))
+                    return 1
+                print(f"  {C.g('✔')}  Updated: {C.g(args.hostname)}")
+        else:
+            err = edit_entry(args.hostname,
+                             new_ip=args.new_ip,
+                             new_hostname=args.new_name,
+                             new_comment=args.new_comment)
+            if err:
+                print(C.r(f"  [-] {err}"))
+                return 1
+            print(f"  {C.g('✔')}  Updated: {C.g(args.hostname)}")
+
+    # ── backup ────────────────────────────────────────────────────────────
+    elif cmd == "backup":
+        action = getattr(args, "action", None)
+        if action == "list":
+            print_backups_table(list_backups())
+        else:
+            dest = backup_hosts()
+            print(f"  {C.g('✔')}  Backup saved: {C.g(str(dest))}")
+
+    # ── restore ───────────────────────────────────────────────────────────
+    elif cmd == "restore":
+        backups = list_backups()
+        if not backups:
+            print(C.dim("  No backups available."))
+            return 1
+
+        if getattr(args, "show_list", False):
+            print_backups_table(backups)
+            return 0
+
+        if args.index is not None:
+            idx = args.index - 1
+            if not (0 <= idx < len(backups)):
+                print(C.r(f"  [-] Invalid backup number: {args.index}"))
+                return 1
+            chosen = backups[idx]
+            if not getattr(args, "force", False):
+                print(f"\n  {C.y('[!] This will overwrite /etc/hosts with:')} {C.g(chosen.name)}")
+                try:
+                    confirm = input(f"  {C.dim('Confirm? [y/N]')} ").strip().lower()
+                except (KeyboardInterrupt, EOFError):
+                    print()
+                    return 0
+                if confirm not in ("y", "yes"):
+                    print(C.dim("  Cancelled."))
+                    return 0
+            err = restore_backup(chosen)
+            if err:
+                print(C.r(f"  [-] {err}"))
+                return 1
+            print(f"  {C.g('✔')}  Restored: {C.g(chosen.name)}")
+        else:
+            # interactive restore inside CLI mode
+            print_backups_table(backups)
+            print(f"  {C.dim('Enter backup number to restore (empty to cancel):')}")
+            try:
+                choice = input(
+                    f"  {C.BOLD}{C.RED}restore{C.END} {C.BOLD}{C.GREEN}>{C.END} "
+                ).strip()
+            except (KeyboardInterrupt, EOFError):
+                print()
+                return 0
+
+            if not choice or not choice.isdigit():
+                print(C.dim("  Cancelled."))
+                return 0
+
+            idx = int(choice) - 1
+            if not (0 <= idx < len(backups)):
+                print(C.r(f"  [-] Invalid number: {choice}"))
+                return 1
+            chosen = backups[idx]
+            print(f"\n  {C.y('[!] This will overwrite /etc/hosts with:')} {C.g(chosen.name)}")
+            try:
+                confirm = input(f"  {C.dim('Confirm? [y/N]')} ").strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                print()
+                return 0
+            if confirm in ("y", "yes"):
+                err = restore_backup(chosen)
+                if err:
+                    print(C.r(f"  [-] {err}"))
+                    return 1
+                print(f"  {C.g('✔')}  Restored: {C.g(chosen.name)}")
+            else:
+                print(C.dim("  Cancelled."))
+
+    return 0
+
+
+# ─────────────────────────────────────────────
+#  Interactive console
 # ─────────────────────────────────────────────
 
 def run_console() -> None:
@@ -700,7 +971,6 @@ def run_console() -> None:
         # ── add ───────────────────────────────────────────────────────────
         elif cmd == "add":
             if not args:
-                # wizard
                 entry = interactive_add_wizard()
                 if entry:
                     err = add_entry(entry)
@@ -709,12 +979,11 @@ def run_console() -> None:
                     else:
                         print(f"  {C.g('✔')}  Added: {C.g(entry.hostname)} → {entry.ip}")
             else:
-                # inline: add <ip> <hostname> [aliases…] [--comment "…"]
                 comment = ""
                 clean_args = []
                 i = 0
                 while i < len(args):
-                    if args[i] == "--comment" and i + 1 < len(args):
+                    if args[i] in ("--comment", "-c") and i + 1 < len(args):
                         comment = args[i + 1]
                         i += 2
                     else:
@@ -722,7 +991,7 @@ def run_console() -> None:
                         i += 1
 
                 if len(clean_args) < 2:
-                    print(C.r("  Usage: add <ip> <hostname> [aliases…] [--comment \"…\"]"))
+                    print(C.r("  Usage: add <ip> <hostname> [aliases…] [-c \"…\"]"))
                 else:
                     ip       = clean_args[0]
                     hostname = clean_args[1]
@@ -741,7 +1010,6 @@ def run_console() -> None:
         # ── remove ────────────────────────────────────────────────────────
         elif cmd == "remove":
             if not args:
-                # interactive picker
                 entries  = all_entries()
                 hostname = interactive_remove_picker(entries)
                 if hostname:
@@ -761,7 +1029,7 @@ def run_console() -> None:
         # ── edit ──────────────────────────────────────────────────────────
         elif cmd == "edit":
             if not args:
-                print(C.r("  Usage: edit <hostname> [--ip <ip>] [--name <name>] [--comment \"…\"]"))
+                print(C.r("  Usage: edit <hostname> [--ip <ip>] [--name <name>] [-c \"…\"]"))
             else:
                 hostname    = args[0]
                 rest        = args[1:]
@@ -769,7 +1037,6 @@ def run_console() -> None:
                 new_name    = None
                 new_comment = None
 
-                # Parse inline flags
                 i = 0
                 has_flags = False
                 while i < len(rest):
@@ -777,13 +1044,12 @@ def run_console() -> None:
                         new_ip    = rest[i + 1]; has_flags = True; i += 2
                     elif rest[i] == "--name" and i + 1 < len(rest):
                         new_name  = rest[i + 1]; has_flags = True; i += 2
-                    elif rest[i] == "--comment" and i + 1 < len(rest):
+                    elif rest[i] in ("--comment", "-c") and i + 1 < len(rest):
                         new_comment = rest[i + 1]; has_flags = True; i += 2
                     else:
                         i += 1
 
                 if not has_flags:
-                    # wizard
                     changes = interactive_edit_wizard(hostname)
                     if changes:
                         err = edit_entry(hostname, **changes)
@@ -829,7 +1095,6 @@ def run_console() -> None:
                 else:
                     print(C.r(f"  [-] Invalid backup number: {args[0]}"))
             else:
-                # interactive picker
                 print_backups_table(backups)
                 print(f"  {C.dim('Enter backup number to restore (empty to cancel):')}")
                 try:
@@ -846,7 +1111,6 @@ def run_console() -> None:
                     idx = int(choice) - 1
                     if 0 <= idx < len(backups):
                         chosen = backups[idx]
-                        # Confirm
                         print(f"\n  {C.y('[!] This will overwrite /etc/hosts with:')} {C.g(chosen.name)}")
                         try:
                             confirm = input(f"  {C.dim('Confirm? [y/N]')} ").strip().lower()
@@ -872,5 +1136,22 @@ def run_console() -> None:
             print(f"  {C.dim('Type')} help {C.dim('for available commands.')}")
 
 
+# ─────────────────────────────────────────────
+#  Entry point
+# ─────────────────────────────────────────────
+
 if __name__ == "__main__":
-    run_console()
+    # If called with no arguments → interactive console
+    if len(sys.argv) == 1:
+        run_console()
+        sys.exit(0)
+
+    parser = build_parser()
+    args   = parser.parse_args()
+
+    if args.command is None:
+        # e.g. `hostsctl --help` already handled by argparse
+        parser.print_help()
+        sys.exit(0)
+
+    sys.exit(run_cli(args))
