@@ -1,244 +1,236 @@
-# HOSTSCTL >
+# hostsctl
 
-**Author:** ZetaOrioniss\
-**Version:** 1.0
+```
+╔══════════════════════════════════════════════════════════════╗
+║                          HOSTsCTL                            ║
+╚══════════════════════════════════════════════════════════════╝
+```
 
-**HOSTSCTL** is an interactive Python console for managing `/etc/hosts` entries during penetration testing and CTF sessions. Add, remove, edit, and search host mappings without ever manually touching the file — and with automatic backups before every write operation.
+A fast, scriptable `/etc/hosts` manager with both a one-liner CLI and an interactive console.
+Built for pentesters, CTF players, and sysadmins who add and remove hosts constantly.
 
-> ⚠️ **Disclaimer**: This tool is intended for use on systems you own or have explicit authorization to administrate. The author declines all responsibility for any misuse.
-
-![screenshot](https://github.com/ZetaOrioniss/hostsctl/blob/main/assets/example.png)
-
----
-
-## 1. Why HOSTSCTL?
-
-During a pentest or CTF, `/etc/hosts` gets edited constantly — adding machine hostnames, virtual host entries for web enumeration, or Active Directory records. The usual workflow is painful: `sudo nano /etc/hosts`, hunt for the right line, edit carefully, save, and hope you didn't break anything.
-
-HOSTSCTL replaces that with a purpose-built console:
-
-* **One-command operations** — add, remove, or edit entries inline without opening any editor.
-* **Metasploit-style UX** — familiar prompt, full `Tab` auto-completion on every command and hostname.
-* **Non-destructive** — system entries (loopback, IPv6 defaults) are displayed but never touched. Every write operation creates a timestamped backup automatically.
-* **Instant search** — find any entry by IP, hostname, or alias across the entire file.
-* **Rollback anytime** — restore any previous state of `/etc/hosts` in two keystrokes.
+**Author:** [@ZetaOrioniss](https://github.com/ZetaOrioniss) — **Version:** v1.1
 
 ---
 
-## 2. Installation & Dependencies
+## Features
 
-### Prerequisites
+- **One-liner CLI** — add, remove, edit, search without entering a console
+- **Interactive console** — readline shell with tab-completion and wizards
+- **Auto-backup** — every write operation snapshots `/etc/hosts` first
+- **Backup rotation** — keeps the 20 most recent backups automatically
+- **Managed vs system entries** — tracks which lines hostsctl wrote vs pre-existing ones
+- **Aliases support** — multiple names per IP in a single entry
+- **Inline comments** — annotate entries (`-c "HackTheBox Season 5"`)
+- **`--force` flag** — skip all confirmation prompts for scripting/automation
 
-Pure Python 3 — no external libraries required.
+---
 
-Write operations require **root privileges** (or `sudo`). The console will still start and let you list/search without root, displaying a `[ro]` indicator in the prompt.
+## Requirements
 
-### Installation
+- Python 3.10+
+- Root / `sudo` access (read-only mode still works without it)
+
+No third-party dependencies — standard library only.
+
+---
+
+## Installation
 
 ```bash
-git clone https://github.com/ZetaOrioniss/hostsctl.git
+# Clone or download
+git clone https://github.com/ZetaOrioniss/hostsctl
 cd hostsctl
+
+# Make executable
 chmod +x hostsctl.py
-```
 
-### Usage
-
-```bash
-# Read-only (listing, search)
-./hostsctl.py
-
-# With write access (add, remove, edit, restore)
-sudo ./hostsctl.py
+# Optional: install system-wide
+sudo cp hostsctl.py /usr/local/bin/hostsctl
 ```
 
 ---
 
-## 3. Usage Guide 🖥️
+## Usage
 
-### Prompt
+### Two modes
 
-```
-hostsctl [rw] >     ← root / write access
-hostsctl [ro] >     ← read-only (no sudo)
-```
-
-The prompt updates in real time. If you restart with `sudo`, it switches to `[rw]` automatically.
+| Mode | How to invoke | When to use |
+|---|---|---|
+| **CLI** | `hostsctl <command> [args]` | One-off operations, scripts, aliases |
+| **Console** | `hostsctl` (no args) | Interactive session, wizards, tab-complete |
 
 ---
 
-## 4. Command Reference
+## CLI Reference
 
-### 📋 Listing & Search
+### List entries
 
-| Command | Description |
-|---|---|
-| `list` / `ls` | Show all entries — managed and system — in a formatted table |
-| `list managed` | Show only entries added by hostsctl |
-| `list system` | Show only pre-existing system entries (read-only display) |
-| `search <term>` | Search by IP, hostname, or alias (partial match) |
-| `show <hostname>` | Display full details for a single entry |
-
-### ➕ Adding Entries
-
-| Command | Description |
-|---|---|
-| `add <ip> <hostname> [alias…] [--comment "…"]` | Add an entry in a single line |
-| `add` | Launch the interactive step-by-step wizard |
-
-**Inline examples:**
 ```bash
-add 10.10.11.25 board.htb
-add 10.10.11.25 board.htb crm.board.htb --comment "HackTheBox BoardLight"
-add 192.168.1.100 dc01.corp.local dc01 --comment "Domain Controller"
+sudo hostsctl list                  # all entries (managed + system)
+sudo hostsctl list managed          # only hostsctl-managed entries
+sudo hostsctl list system           # only pre-existing system entries
+sudo hostsctl ls                    # alias for list
 ```
 
-**Wizard** (`add` with no arguments):
-```
-IP address: 10.10.11.25
-Hostname:   board.htb
-Aliases:    crm.board.htb
-Comment:    HackTheBox BoardLight
+### Add an entry
 
-Preview:  10.10.11.25    board.htb    crm.board.htb  # HackTheBox BoardLight  # [hostsctl]
-Confirm? [Y/n]
-```
-
-### ❌ Removing Entries
-
-| Command | Description |
-|---|---|
-| `remove <hostname>` | Remove an entry by hostname or alias |
-| `remove` | Launch the interactive numbered picker |
-
-### ✏️ Editing Entries
-
-| Command | Description |
-|---|---|
-| `edit <hostname>` | Interactive wizard — shows current values, blank = keep |
-| `edit <hostname> --ip <new_ip>` | Update the IP only |
-| `edit <hostname> --name <new_name>` | Rename the hostname |
-| `edit <hostname> --comment "…"` | Update the comment |
-
-Flags can be combined:
 ```bash
-edit board.htb --ip 10.10.11.99 --comment "Updated IP"
+sudo hostsctl add <ip> <hostname> [aliases…] [-c "comment"]
+
+# Examples
+sudo hostsctl add 10.10.10.5 machine.htb
+sudo hostsctl add 10.10.10.5 machine.htb admin.machine.htb -c "HackTheBox"
+sudo hostsctl add 192.168.1.100 dev.local api.dev.local web.dev.local -c "dev env"
 ```
 
-### 💾 Backups
+### Remove an entry
 
-| Command | Description |
-|---|---|
-| `backup` | Create a manual snapshot now |
-| `backups` / `backup list` | List all saved backups with date and size |
-| `restore` | Interactive picker with confirmation prompt |
-| `restore <n>` | Restore backup number `n` directly |
+```bash
+sudo hostsctl remove <hostname>             # prompts for confirmation
+sudo hostsctl remove <hostname> --force     # no prompt (for scripts)
+sudo hostsctl rm <hostname>                 # alias
+sudo hostsctl del <hostname>                # alias
+```
 
-Backups are stored in `~/.hostsctl/backups/` and rotated automatically (20 most recent kept). A backup is **always created automatically** before any write operation (add, remove, edit, restore).
+### Edit an entry
 
-### 🔧 Other
+```bash
+sudo hostsctl edit <hostname> --ip <new-ip>
+sudo hostsctl edit <hostname> --name <new-hostname>
+sudo hostsctl edit <hostname> -c "new comment"
+
+# Combine flags in one shot
+sudo hostsctl edit machine.htb --ip 10.10.10.99 --name newbox.htb -c "retired"
+
+# No flags → launches interactive wizard
+sudo hostsctl edit machine.htb
+```
+
+### Search & inspect
+
+```bash
+sudo hostsctl search <term>         # match on IP, hostname, or alias
+sudo hostsctl show <hostname>       # detailed view of one entry
+```
+
+### Backups
+
+```bash
+sudo hostsctl backup                # create a manual backup now
+sudo hostsctl backup list           # list all saved backups
+sudo hostsctl backups               # alias for backup list
+
+sudo hostsctl restore               # interactive picker
+sudo hostsctl restore <n>           # restore backup by index number
+sudo hostsctl restore --list        # print backup list and exit
+sudo hostsctl restore <n> --force   # restore without confirmation
+```
+
+Backups are stored in `~/.hostsctl/backups/` and named `hosts_YYYYMMDD_HHMMSS`.
+
+---
+
+## Interactive Console
+
+Launch by running `hostsctl` with no arguments:
+
+```
+hostsctl [rw] > _
+```
+
+The prompt shows `[rw]` (read-write) or `[ro]` (read-only) depending on your permissions.
+
+All CLI commands work inside the console too. Additional console-only commands:
 
 | Command | Description |
 |---|---|
 | `clear` | Clear the screen |
-| `help` | Show the full command reference |
+| `help` | Show command reference |
 | `exit` / `quit` | Exit the console |
 
----
+Tab-completion is available for commands, subcommands, and hostnames.
 
-## 5. Workflow Examples
+### Interactive wizards
 
-### HTB / CTF — Add a machine
-
-```
-hostsctl [rw] > add 10.10.11.25 board.htb --comment "BoardLight"
-  ✔  Added: board.htb → 10.10.11.25
-```
-
-### VHost enumeration — Add multiple aliases at once
+Some commands open a step-by-step wizard when called without arguments:
 
 ```
-hostsctl [rw] > add 10.10.11.25 board.htb crm.board.htb portal.board.htb
-  ✔  Added: board.htb → 10.10.11.25
-```
-
-### Machine IP changed after reset — Edit in place
-
-```
-hostsctl [rw] > edit board.htb --ip 10.10.11.38
-  ✔  Updated: board.htb
-```
-
-### Find all entries for a subnet
-
-```
-hostsctl [rw] > search 10.10.11
-```
-
-### Undo a broken edit
-
-```
+hostsctl [rw] > add
+hostsctl [rw] > remove
+hostsctl [rw] > edit <hostname>     ← wizard if no flags given
 hostsctl [rw] > restore
-  #  BACKUP               DATE                  SIZE
-  1. hosts_20250518_143201  2025-05-18 14:32:01   847 B
-  2. hosts_20250518_141055  2025-05-18 14:10:55   802 B
-  ...
-Enter backup number to restore: 1
-  [!] This will overwrite /etc/hosts with: hosts_20250518_143201
-  Confirm? [y/N] y
-  ✔  Restored: hosts_20250518_143201
 ```
 
 ---
 
-## 6. File Format & Safety
+## How entries are tracked
 
-Entries added by HOSTSCTL are tagged with an inline marker (`# [hostsctl]`) so they can be safely identified, edited, and removed without touching anything else in the file.
-
-**Your existing system entries are never modified.** The tool reads them, displays them as `[sys]`, and leaves them untouched.
+hostsctl marks every line it writes with an inline tag:
 
 ```
-# /etc/hosts — example after using HOSTSCTL
+10.10.10.5    machine.htb    admin.htb  # HackTheBox  # [hostsctl]
+```
 
-127.0.0.1    localhost                          ← [sys] never touched
-::1          localhost ip6-localhost ip6-loopback
+Lines without this tag are treated as **system entries** and are never touched by remove or edit. They show up in `list` output labelled `[sys]`.
 
-# ── hostsctl managed entries ───────────────────
-10.10.11.25  board.htb  crm.board.htb  # BoardLight  # [hostsctl]
-10.10.10.3   cronos.htb                              # [hostsctl]
+---
+
+## Backup behaviour
+
+Every destructive operation (`add`, `remove`, `edit`, `restore`) automatically snapshots the current `/etc/hosts` before making any change. You never lose data.
+
+```bash
+~/.hostsctl/backups/
+├── hosts_20250610_142301
+├── hosts_20250610_151807
+└── hosts_20250611_093244   ← most recent
+```
+
+The 20 most recent backups are kept; older ones are deleted automatically.
+
+---
+
+## Practical examples
+
+### HackTheBox / CTF workflow
+
+```bash
+# Box starts
+sudo hostsctl add 10.10.11.42 ouija.htb -c "HTB Season 4"
+
+# Discover a vhost
+sudo hostsctl edit ouija.htb --ip 10.10.11.42   # same IP, different note
+sudo hostsctl add 10.10.11.42 dev.ouija.htb -c "vhost discovered"
+
+# Box retired
+sudo hostsctl remove ouija.htb --force
+sudo hostsctl remove dev.ouija.htb --force
+```
+
+### Lab / dev environment
+
+```bash
+# Spin up a whole environment at once
+for host in api web db; do
+    sudo hostsctl add 192.168.56.10 ${host}.lab.local --force
+done
+
+# Tear it all down
+sudo hostsctl list managed          # review
+sudo hostsctl remove api.lab.local --force
+```
+
+### Scripting with exit codes
+
+`hostsctl` returns exit code `0` on success and `1` on error, making it safe to use in scripts:
+
+```bash
+sudo hostsctl add 10.0.0.1 target.local && echo "Ready" || echo "Failed"
 ```
 
 ---
 
-## 7. Backup System
+## License
 
-| Detail | Value |
-|---|---|
-| Location | `~/.hostsctl/backups/` |
-| Format | `hosts_YYYYMMDD_HHMMSS` |
-| Trigger | Automatic before every write + manual `backup` command |
-| Retention | 20 most recent (older ones deleted automatically) |
-| Restore safety | Current state is backed up before any restore |
-
----
-
-## 8. Tab Completion
-
-Every command, sub-command, flag, and existing hostname supports `Tab` completion:
-
-```
-list <Tab>        → managed  system
-remove <Tab>      → board.htb  cronos.htb  …
-edit board<Tab>   → board.htb
-edit board.htb <Tab>  → --ip  --name  --comment
-backup <Tab>      → list
-```
-
----
-
-## Upcoming Features
-
-* `--alias add/remove` flag to manage aliases independently
-* `import <file>` — bulk import from a hosts file
-* `export` — export managed entries only
-* Color-coded IP ranges (10.x, 192.168.x, etc.)
-* Shell one-liner mode: `hostsctl add 10.10.11.25 board.htb` (non-interactive)
+MIT — do whatever you want, attribution appreciated.
