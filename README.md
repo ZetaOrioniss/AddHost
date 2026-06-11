@@ -1,15 +1,29 @@
 # hostsctl
 
 ```
-╔══════════════════════════════════════════════════════════════╗
-║                          HOSTsCTL                            ║
-╚══════════════════════════════════════════════════════════════╝
+ .S    S.     sSSs_sSSs      sSSs  sdSS_SSSSSSbs    sSSs    sSSs  sdSS_SSSSSSbs  S.      
+.SS    SS.   d%%SP~YS%%b    d%%SP  YSSS~S%SSSSSP   d%%SP   d%%SP  YSSS~S%SSSSSP  SS.     
+S%S    S%S  d%S'     `S%b  d%S'         S%S       d%S'    d%S'         S%S       S%S     
+S%S    S%S  S%S       S%S  S%|          S%S       S%|     S%S          S%S       S%S     
+S%S SSSS%S  S&S       S&S  S&S          S&S       S&S     S&S          S&S       S&S     
+S&S  SSS&S  S&S       S&S  Y&Ss         S&S       Y&Ss    S&S          S&S       S&S     
+S&S    S&S  S&S       S&S  `S&&S        S&S       `S&&S   S&S          S&S       S&S     
+S&S    S&S  S&S       S&S    `S*S       S&S         `S*S  S&S          S&S       S&S     
+S*S    S*S  S*b       d*S     l*S       S*S          l*S  S*b          S*S       S*b     
+S*S    S*S  S*S.     .S*S    .S*P       S*S         .S*P  S*S.         S*S       S*S.    
+S*S    S*S   SSSbs_sdSSS   sSS*S        S*S       sSS*S    SSSbs       S*S        SSSbs  
+SSS    S*S    YSSP~YSSY    YSS'         S*S       YSS'      YSSP       S*S         YSSP  
+       SP                               SP                             SP                
+       Y                                Y                              Y                 
+                                                                                         
 ```
 
 A fast, scriptable `/etc/hosts` manager with both a one-liner CLI and an interactive console.
-Built for pentesters, CTF players, and sysadmins who add and remove hosts constantly.
+Built for developers, pentesters, CTF players, and sysadmins who add and remove hosts constantly.
 
-**Author:** [@ZetaOrioniss](https://github.com/ZetaOrioniss) — **Version:** v1.1
+The README file was written by an AI. Please report any mistakes.
+
+**Author:** [@ZetaOrioniss](https://github.com/ZetaOrioniss) — **Version:** v1.2
 
 ---
 
@@ -39,14 +53,11 @@ No third-party dependencies — standard library only.
 
 ```bash
 # Clone or download
-git clone https://github.com/ZetaOrioniss/hostsctl
+git clone https://github.com/ZetaOrioniss/HostsCTL.git
 cd hostsctl
 
 # Make executable
-chmod +x hostsctl.py
-
-# Optional: install system-wide
-sudo cp hostsctl.py /usr/local/bin/hostsctl
+chmod +x install.sh && ./install.sh
 ```
 
 ---
@@ -228,9 +239,3 @@ sudo hostsctl remove api.lab.local --force
 ```bash
 sudo hostsctl add 10.0.0.1 target.local && echo "Ready" || echo "Failed"
 ```
-
----
-
-## License
-
-MIT — do whatever you want, attribution appreciated.
