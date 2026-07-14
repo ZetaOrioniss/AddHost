@@ -214,7 +214,9 @@ def remove_entry(hostname: str) -> str | None:
 
 def edit_entry(hostname: str, new_ip: str | None = None,
                new_hostname: str | None = None,
-               new_comment: str | None = None) -> str | None:
+               new_comment: str | None = None,
+               add_aliases: list[str] | None = None,
+               remove_aliases: list[str] | None = None) -> str | None:
     if not _check_root():
         return "Permission denied — run as root or with sudo."
 
@@ -234,6 +236,14 @@ def edit_entry(hostname: str, new_ip: str | None = None,
             old_ip   = tokens[0]
             old_hn   = tokens[1]
             aliases  = tokens[2:]
+
+            if remove_aliases:
+                aliases = [a for a in aliases if a not in remove_aliases]
+            if add_aliases:
+                for a in add_aliases:
+                    if a not in aliases and a != old_hn:
+                        aliases.append(a)
+
             old_comment_m = re.search(r"#\s*(.+)$", line)
             old_comment   = old_comment_m.group(1).strip() if old_comment_m else ""
             old_comment = old_comment.replace("[hostsctl]", "").replace("hostsctl", "").strip()
@@ -339,20 +349,20 @@ def print_single_entry(e: HostEntry) -> None:
     print()
 
 
-def interactive_remove_picker(entries: list[HostEntry]) -> str | None:
+def interactive_remove_picker(entries: list[HostEntry]) -> list[str] | None:
     managed = [e for e in entries if e.managed]
     if not managed:
         print(C.r("  [-] No managed entries to remove."))
         return None
 
     print(f"\n{hr('─')}")
-    print(f"  {C.bold('Select an entry to remove:')}")
+    print(f"  {C.bold('Select one or more entries to remove:')}")
     print(hr("─", C.DIM))
     for i, e in enumerate(managed, 1):
         print(f"  {C.dim(str(i) + '.'):<{5 + len(C.DIM) + len(C.END)}}"
               f"{C.g(e.ip):<20}{C.c(e.hostname)}")
     print(hr("─"))
-    print(f"  {C.dim('Enter number or hostname (empty to cancel):')}")
+    print(f"  {C.dim('Enter number(s) (e.g. 1,3,5 or 2-4), hostname(s), \"all\", or empty to cancel:')}")
 
     try:
         choice = input(f"  {C.BOLD}{C.RED}remove{C.END} {C.BOLD}{C.GREEN}>{C.END} ").strip()
@@ -364,14 +374,30 @@ def interactive_remove_picker(entries: list[HostEntry]) -> str | None:
         print(C.dim("  Cancelled."))
         return None
 
-    if choice.isdigit():
-        idx = int(choice) - 1
-        if 0 <= idx < len(managed):
-            return managed[idx].hostname
-        print(C.r(f"  [-] Invalid number: {choice}"))
-        return None
+    if choice.lower() == "all":
+        return [e.hostname for e in managed]
 
-    return choice
+    hostnames: list[str] = []
+    for token in re.split(r"[,\s]+", choice):
+        if not token:
+            continue
+        if re.match(r"^\d+-\d+$", token):
+            start, end = (int(n) for n in token.split("-"))
+            for idx in range(start, end + 1):
+                if 1 <= idx <= len(managed):
+                    hostnames.append(managed[idx - 1].hostname)
+                else:
+                    print(C.r(f"  [-] Invalid number: {idx}"))
+        elif token.isdigit():
+            idx = int(token)
+            if 1 <= idx <= len(managed):
+                hostnames.append(managed[idx - 1].hostname)
+            else:
+                print(C.r(f"  [-] Invalid number: {token}"))
+        else:
+            hostnames.append(token)
+
+    return hostnames or None
 
 
 def interactive_add_wizard() -> HostEntry | None:
@@ -444,15 +470,26 @@ def interactive_edit_wizard(hostname: str) -> dict | None:
             return None
         return val if val else None
 
-    new_ip      = ask("New IP     ", target.ip)
-    new_hn      = ask("New name   ", target.hostname)
-    new_comment = ask("New comment", target.comment or "—")
+    new_ip      = ask("New IP        ", target.ip)
+    new_hn      = ask("New name      ", target.hostname)
+    new_comment = ask("New comment   ", target.comment or "—")
 
-    if new_ip is None and new_hn is None and new_comment is None:
+    current_aliases = ", ".join(target.aliases) if target.aliases else "—"
+    add_raw    = ask("Add aliases   ", f"none, current: {current_aliases}")
+    remove_raw = ask("Remove aliases", "none")
+
+    add_aliases    = add_raw.split()    if add_raw    else None
+    remove_aliases = remove_raw.split() if remove_raw else None
+
+    if (new_ip is None and new_hn is None and new_comment is None
+            and not add_aliases and not remove_aliases):
         print(C.dim("  Nothing changed."))
         return None
 
-    return {"new_ip": new_ip, "new_hostname": new_hn, "new_comment": new_comment}
+    return {
+        "new_ip": new_ip, "new_hostname": new_hn, "new_comment": new_comment,
+        "add_aliases": add_aliases, "remove_aliases": remove_aliases,
+    }
 
 
 def print_backups_table(backups: list[Path]) -> None:
@@ -509,13 +546,16 @@ HELP = f"""
 
   {C.bold('Removing')}
   {C.g('remove <hostname>')}           Remove entry by hostname/alias
-  {C.g('remove')}                       Interactive picker
+  {C.g('remove <h1> <h2> …')}          Remove several entries at once
+  {C.g('remove')}                       Interactive picker (supports 1,3,5 or "all")
 
   {C.bold('Editing')}
   {C.g('edit <hostname>')}             Interactive edit wizard
   {C.g('edit <hostname> --ip <ip>')}   Change only the IP
   {C.g('edit <hostname> --name <n>')}  Rename the hostname
   {C.g('edit <hostname> --comment "…"')} Update comment
+  {C.g('edit <hostname> --add-alias <a1> [a2…]')}    Add one or more aliases
+  {C.g('edit <hostname> --remove-alias <a1> [a2…]')} Remove one or more aliases
 
   {C.bold('Backups')}
   {C.g('backup')}                      Create a manual backup now
@@ -544,12 +584,16 @@ CLI_HELP_EPILOG = f"""
   # Remove
   sudo hostsctl remove machine.htb
   sudo hostsctl remove machine.htb --force        # no confirmation prompt
+  sudo hostsctl remove machine.htb old.htb stale.htb    # remove several at once
+  sudo hostsctl remove machine.htb old.htb --force
 
   # Edit
   sudo hostsctl edit machine.htb --ip 10.10.10.99
   sudo hostsctl edit machine.htb --name newbox.htb
   sudo hostsctl edit machine.htb -c "retired box"
   sudo hostsctl edit machine.htb --ip 10.0.0.1 --name other.htb -c "updated"
+  sudo hostsctl edit machine.htb --add-alias admin.machine.htb dev.machine.htb
+  sudo hostsctl edit machine.htb --remove-alias admin.machine.htb
 
   # Search & show
   sudo hostsctl search 10.10.10
@@ -599,7 +643,8 @@ def completer(text: str, state: int):
     elif parts[0] in ("show", "remove", "edit") and nparts <= 2:
         opts = [h for h in _hostnames() if h.startswith(text)]
     elif parts[0] == "edit" and nparts >= 3:
-        opts = [o for o in ("--ip", "--name", "--comment") if o.startswith(text)]
+        opts = [o for o in ("--ip", "--name", "--comment",
+                             "--add-alias", "--remove-alias") if o.startswith(text)]
     elif parts[0] == "backup" and nparts <= 2:
         opts = [o for o in BACKUP_OPTS if o.startswith(text)]
     else:
@@ -664,8 +709,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ── remove ────────────────────────────────────────────────────────────
     p_rm = sub.add_parser("remove", aliases=["rm", "del"],
-        help="Remove an entry by hostname/alias")
-    p_rm.add_argument("hostname", help="Hostname or alias to remove")
+        help="Remove one or more entries by hostname/alias")
+    p_rm.add_argument("hostnames", nargs="+", metavar="hostname",
+        help="One or more hostnames/aliases to remove")
     p_rm.add_argument("-f", "--force", action="store_true",
         help="Skip confirmation prompt")
 
@@ -678,6 +724,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="New canonical hostname")
     p_edit.add_argument("-c", "--comment", dest="new_comment", default=None,
         metavar="TEXT", help="New comment (use '' to clear)")
+    p_edit.add_argument("--add-alias", dest="add_aliases", nargs="+", default=None,
+        metavar="ALIAS", help="Add one or more aliases")
+    p_edit.add_argument("--remove-alias", dest="remove_aliases", nargs="+", default=None,
+        metavar="ALIAS", help="Remove one or more aliases")
 
     # ── backup ────────────────────────────────────────────────────────────
     p_bk = sub.add_parser("backup", help="Create a backup or list existing ones")
@@ -764,10 +814,12 @@ def run_cli(args: argparse.Namespace) -> int:
 
     # ── remove ────────────────────────────────────────────────────────────
     elif cmd == "remove":
+        hostnames = args.hostnames
         if not getattr(args, "force", False):
+            label = hostnames[0] if len(hostnames) == 1 else f"{len(hostnames)} entries"
             try:
                 confirm = input(
-                    f"  {C.y('[!] Remove')} {C.bold(args.hostname)}{C.y('?')} "
+                    f"  {C.y('[!] Remove')} {C.bold(label)}{C.y('?')} "
                     f"{C.dim('[y/N]')} "
                 ).strip().lower()
             except (KeyboardInterrupt, EOFError):
@@ -776,15 +828,27 @@ def run_cli(args: argparse.Namespace) -> int:
             if confirm not in ("y", "yes"):
                 print(C.dim("  Cancelled."))
                 return 0
-        err = remove_entry(args.hostname)
-        if err:
-            print(C.r(f"  [-] {err}"))
-            return 1
-        print(f"  {C.g('✔')}  Removed: {C.g(args.hostname)}")
+
+        ok_count = 0
+        exit_code = 0
+        for hostname in hostnames:
+            err = remove_entry(hostname)
+            if err:
+                print(C.r(f"  [-] {err}"))
+                exit_code = 1
+            else:
+                print(f"  {C.g('✔')}  Removed: {C.g(hostname)}")
+                ok_count += 1
+        if len(hostnames) > 1:
+            print(f"  {C.dim(f'{ok_count}/{len(hostnames)} entries removed.')}")
+        return exit_code
 
     # ── edit ──────────────────────────────────────────────────────────────
     elif cmd == "edit":
-        if args.new_ip is None and args.new_name is None and args.new_comment is None:
+        add_aliases    = getattr(args, "add_aliases", None)
+        remove_aliases = getattr(args, "remove_aliases", None)
+        if (args.new_ip is None and args.new_name is None and args.new_comment is None
+                and not add_aliases and not remove_aliases):
             # no flags → wizard
             changes = interactive_edit_wizard(args.hostname)
             if changes:
@@ -797,7 +861,9 @@ def run_cli(args: argparse.Namespace) -> int:
             err = edit_entry(args.hostname,
                              new_ip=args.new_ip,
                              new_hostname=args.new_name,
-                             new_comment=args.new_comment)
+                             new_comment=args.new_comment,
+                             add_aliases=add_aliases,
+                             remove_aliases=remove_aliases)
             if err:
                 print(C.r(f"  [-] {err}"))
                 return 1
@@ -1010,42 +1076,67 @@ def run_console() -> None:
         # ── remove ────────────────────────────────────────────────────────
         elif cmd == "remove":
             if not args:
-                entries  = all_entries()
-                hostname = interactive_remove_picker(entries)
-                if hostname:
+                entries    = all_entries()
+                hostnames  = interactive_remove_picker(entries)
+                if hostnames:
+                    ok_count = 0
+                    for hostname in hostnames:
+                        err = remove_entry(hostname)
+                        if err:
+                            print(C.r(f"  [-] {err}"))
+                        else:
+                            print(f"  {C.g('✔')}  Removed: {C.g(hostname)}")
+                            ok_count += 1
+                    if len(hostnames) > 1:
+                        print(f"  {C.dim(f'{ok_count}/{len(hostnames)} entries removed.')}")
+            else:
+                hostnames = args
+                ok_count  = 0
+                for hostname in hostnames:
                     err = remove_entry(hostname)
                     if err:
                         print(C.r(f"  [-] {err}"))
                     else:
                         print(f"  {C.g('✔')}  Removed: {C.g(hostname)}")
-            else:
-                hostname = args[0]
-                err      = remove_entry(hostname)
-                if err:
-                    print(C.r(f"  [-] {err}"))
-                else:
-                    print(f"  {C.g('✔')}  Removed: {C.g(hostname)}")
+                        ok_count += 1
+                if len(hostnames) > 1:
+                    print(f"  {C.dim(f'{ok_count}/{len(hostnames)} entries removed.')}")
 
         # ── edit ──────────────────────────────────────────────────────────
         elif cmd == "edit":
             if not args:
-                print(C.r("  Usage: edit <hostname> [--ip <ip>] [--name <name>] [-c \"…\"]"))
+                print(C.r("  Usage: edit <hostname> [--ip <ip>] [--name <name>] "
+                           "[-c \"…\"] [--add-alias <a…>] [--remove-alias <a…>]"))
             else:
-                hostname    = args[0]
-                rest        = args[1:]
-                new_ip      = None
-                new_name    = None
-                new_comment = None
+                hostname       = args[0]
+                rest           = args[1:]
+                new_ip         = None
+                new_name       = None
+                new_comment    = None
+                add_aliases    = []
+                remove_aliases = []
 
                 i = 0
                 has_flags = False
                 while i < len(rest):
                     if rest[i] == "--ip" and i + 1 < len(rest):
-                        new_ip    = rest[i + 1]; has_flags = True; i += 2
+                        new_ip = rest[i + 1]; has_flags = True; i += 2
                     elif rest[i] == "--name" and i + 1 < len(rest):
-                        new_name  = rest[i + 1]; has_flags = True; i += 2
+                        new_name = rest[i + 1]; has_flags = True; i += 2
                     elif rest[i] in ("--comment", "-c") and i + 1 < len(rest):
                         new_comment = rest[i + 1]; has_flags = True; i += 2
+                    elif rest[i] == "--add-alias":
+                        has_flags = True
+                        i += 1
+                        while i < len(rest) and not rest[i].startswith("--"):
+                            add_aliases.append(rest[i])
+                            i += 1
+                    elif rest[i] == "--remove-alias":
+                        has_flags = True
+                        i += 1
+                        while i < len(rest) and not rest[i].startswith("--"):
+                            remove_aliases.append(rest[i])
+                            i += 1
                     else:
                         i += 1
 
@@ -1059,7 +1150,9 @@ def run_console() -> None:
                             print(f"  {C.g('✔')}  Updated: {C.g(hostname)}")
                 else:
                     err = edit_entry(hostname, new_ip=new_ip,
-                                     new_hostname=new_name, new_comment=new_comment)
+                                     new_hostname=new_name, new_comment=new_comment,
+                                     add_aliases=add_aliases or None,
+                                     remove_aliases=remove_aliases or None)
                     if err:
                         print(C.r(f"  [-] {err}"))
                     else:
